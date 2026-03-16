@@ -2,8 +2,52 @@ import numpy as np
 import scipy.signal as sig
 import scipy.io.wavfile as wav
 
+
+# TODO: ideally the instability is not sinusoidal exactly, more random, coming
+# in unpredictible "waves".
+def apply_wind_vibrato(audio, sr, depth_ms=2.0, rate_hz=0.5):
+    """
+    Simulates pitch instability caused by wind turbulence.
+    depth_ms: How much the 'distance' fluctuates in milliseconds.
+    rate_hz: How fast the wind gusts change the pitch.
+    """
+    total_samples = len(audio)
+    time = np.arange(total_samples) / sr
+
+    # 1. Create a wandering LFO for the delay offset
+    # We use a slow, drifting sine wave to simulate shifting wind pockets
+    delay_lfo = (np.sin(2 * np.pi * rate_hz * time) + 
+                 0.5 * np.sin(2 * np.pi * (rate_hz * 1.1) * time)) 
+
+    # Convert depth from milliseconds to samples
+    max_delay_samples = int((depth_ms / 1000.0) * sr)
+
+    # Scale LFO to sample range
+    # Shift so it's always a positive delay
+    sample_offsets = (delay_lfo + 1) * (max_delay_samples / 2)
+
+    output = np.zeros_like(audio)
+
+    # 2. Fractional Delay Line with Linear Interpolation
+    for i in range(max_delay_samples, total_samples):
+        # Calculate where the "delayed" sample is
+        precise_idx = i - sample_offsets[i]
+
+        # Get the two integer neighbors
+        idx_low = int(np.floor(precise_idx))
+        idx_high = idx_low + 1
+
+        # Calculate the fractional distance between them (alpha)
+        alpha = precise_idx - idx_low
+
+        # Linear Interpolation formula: y = x0 * (1 - alpha) + x1 * alpha
+        output[i] = audio[idx_low] * (1 - alpha) + audio[idx_high] * alpha
+
+    return output
+
+
 def simulate_wind_and_distance(input_file, output_file, ir_file=None):
-    # 1. Load the Audio
+    # 0. Load the Audio
     sr, audio = wav.read(input_file)
 
     # Normalize input audio to -1.0 to 1.0 float64
@@ -16,6 +60,9 @@ def simulate_wind_and_distance(input_file, output_file, ir_file=None):
 
     total_samples = len(audio)
     time = np.arange(total_samples) / sr
+
+    # 1. Add "shimmer"
+    audio = apply_wind_vibrato(audio, sr, depth_ms=3.0, rate_hz=0.4)
 
     # 2. Generate the "Wind" LFO
     # We combine a few low-frequency sine waves to create an unpredictable, rolling "gust" 
@@ -96,6 +143,8 @@ def simulate_wind_and_distance(input_file, output_file, ir_file=None):
     output_audio_int16 = np.int16(output_audio * 32767.0)
     wav.write(output_file, sr, output_audio_int16)
     print(f"Processing complete. Saved to {output_file}")
+
+
 
 # Example execution:
 # simulate_wind_and_distance("vocals.wav", "distant_vocals.wav", ir_file="open_field_ir.wav")
